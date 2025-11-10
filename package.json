@@ -13,6 +13,8 @@
     "start:server:dev": "nest start server --watch",
     "start:client": "vite --config apps/client/vite.config.ts",
     "start:client:dev": "vite --config apps/client/vite.config.ts",
+    "build:client": "vite build --config apps/client/vite.config.ts",
+    "build:server": "nest build server",
     "dev": "concurrently \"nest start server --watch\" \"vite --config apps/client/vite.config.ts\"",
     "build": "nest build",
     "format": "prettier --write \"apps/**/*.ts\" \"libs/**/*.ts\"",
