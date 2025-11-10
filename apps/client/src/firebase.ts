@@ -2,12 +2,21 @@ import { initializeApp, getApps } from 'firebase/app';
 import { getFirestore } from 'firebase/firestore';
 
 export const firebaseConfig = {
-  apiKey: 'AIzaSyDWJG_1GYIKcUNP-9y1hHZxxqg0g2qaKJM',
-  authDomain: 'p2p-chat-12afe.firebaseapp.com',
-  projectId: 'p2p-chat-12afe',
-  storageBucket: 'p2p-chat-12afe.firebasestorage.app',
-  messagingSenderId: '103837122950',
-  appId: '1:103837122950:web:b064e74fbdecc87dc22c07',
+  apiKey:
+    import.meta.env.VITE_FIREBASE_API_KEY ||
+    'AIzaSyA6XLbDuwyHtuNfcH563s5a4trIdhy3r2o',
+  authDomain:
+    import.meta.env.VITE_FIREBASE_AUTH_DOMAIN ||
+    'p2p-messaging-a1df8.firebaseapp.com',
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || 'p2p-messaging-a1df8',
+  storageBucket:
+    import.meta.env.VITE_FIREBASE_STORAGE_BUCKET ||
+    'p2p-messaging-a1df8.firebasestorage.app',
+  messagingSenderId:
+    import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '830784360605',
+  appId:
+    import.meta.env.VITE_FIREBASE_APP_ID ||
+    '1:830784360605:web:819bc921c3aa1476874474',
 };
 
 export function getDb() {

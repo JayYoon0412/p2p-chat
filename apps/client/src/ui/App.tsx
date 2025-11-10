@@ -12,7 +12,7 @@ import {
 import { getDb } from '../firebase.js';
 import { createPeer, sendJSON } from '../webrtc.js';
 
-const apiBase = 'http://localhost:5173';
+const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001';
 
 export default function App() {
   const db = useMemo(() => getDb(), []);

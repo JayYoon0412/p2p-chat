@@ -14,9 +14,19 @@ describe('ServerController', () => {
     serverController = app.get<ServerController>(ServerController);
   });
 
-  describe('root', () => {
-    it('should return "Hello World!"', () => {
-      expect(serverController.getHello()).toBe('Hello World!');
+  describe('health', () => {
+    it('should return health status', () => {
+      const result = serverController.health();
+      expect(result.ok).toBe(true);
+      expect(result.now).toBeDefined();
+    });
+  });
+
+  describe('version', () => {
+    it('should return version information', () => {
+      const result = serverController.version();
+      expect(result.name).toBe('p2p-server');
+      expect(result.version).toBe('0.1.0');
     });
   });
 });
