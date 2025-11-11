@@ -100,18 +100,18 @@ This P2P chat application implements a distributed communication system where me
 
 **Implementation**:
 
-- Single endpoint: `/route-match` (POST)
+- Single endpoint: `/quick-match` (POST)
 - In-memory queue for pairing users
 - Returns:
-  - `{ status: 'waiting', roomID: string }` - First user joins queue
+  - `{ status: 'waiting', roomId: string }` - First user joins queue
   - `{ status: 'paired', roomId: string }` - Second user gets paired with first
 
 **Additional Endpoints**:
 
 - `GET /health` - Health check
 - `GET /version` - Version information
-- `GET /route-match/peek` - Check queue length
-- `DELETE /route-match/reset` - Clear queue (for testing)
+- `GET /quick-match/peek` - Check queue length
+- `DELETE /quick-match/reset` - Clear queue (for testing)
 
 **Why Minimal Server**: Messages flow directly P2P, so server is only needed for initial pairing. This reduces server load and improves scalability.
 
@@ -145,8 +145,8 @@ This P2P chat application implements a distributed communication system where me
 ### Quick-Match Flow
 
 1. User clicks "Quick-Match"
-2. Client calls `POST /route-match`
-3. If queue empty: Server creates roomID, adds to queue, returns `waiting`
+2. Client calls `POST /quick-match`
+3. If queue empty: Server creates roomId, adds to queue, returns `waiting`
 4. If queue not empty: Server pairs with first user, returns `paired`
 5. Client automatically calls `createRoom()` or `joinRoom()` based on status
 

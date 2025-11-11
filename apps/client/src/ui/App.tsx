@@ -59,25 +59,40 @@ export default function App() {
     setRole(null);
   }
 
-  async function createRoom() {
+  async function createRoom(existingRoomId?: string) {
     cleanup();
     setRole('host');
     setConnState('signaling');
     const pc = createPeer();
     pcRef.current = pc;
-    const roomRef = await addDoc(collection(db, 'rooms'), {
-      createdAt: serverTimestamp(),
-      type: 'p2p-chat',
-      state: 'waiting',
-    });
-    setRoomId(roomRef.id);
-    append('system', `Room created: ${roomRef.id}`);
+    
+    let roomIdToUse: string;
+    if (existingRoomId) {
+      // Use provided room ID (from quick-match)
+      roomIdToUse = existingRoomId;
+      await setDoc(doc(db, 'rooms', roomIdToUse), {
+        createdAt: serverTimestamp(),
+        type: 'p2p-chat',
+        state: 'waiting',
+      });
+      append('system', `Using room: ${roomIdToUse}`);
+    } else {
+      // Create new room
+      const roomRef = await addDoc(collection(db, 'rooms'), {
+        createdAt: serverTimestamp(),
+        type: 'p2p-chat',
+        state: 'waiting',
+      });
+      roomIdToUse = roomRef.id;
+      append('system', `Room created: ${roomIdToUse}`);
+    }
+    setRoomId(roomIdToUse);
 
     const chat = pc.createDataChannel('chat', { ordered: true });
     chatRef.current = chat;
     wireChat(chat);
 
-    const callerCands = collection(db, `rooms/${roomRef.id}/callerCandidates`);
+    const callerCands = collection(db, `rooms/${roomIdToUse}/callerCandidates`);
     pc.onicecandidate = async (e) => {
       if (e.candidate) {
         const init = {
@@ -93,19 +108,19 @@ export default function App() {
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
     await setDoc(
-      doc(db, 'rooms', roomRef.id),
+      doc(db, 'rooms', roomIdToUse),
       { offer: { type: offer.type, sdp: offer.sdp }, state: 'offered' },
       { merge: true },
     );
 
-    const unsubRoom = onSnapshot(doc(db, 'rooms', roomRef.id), async (snap) => {
+    const unsubRoom = onSnapshot(doc(db, 'rooms', roomIdToUse), async (snap) => {
       const data = snap.data();
       if (data?.answer && !pc.currentRemoteDescription) {
         await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
         setConnState('connecting');
       }
     });
-    const calleeCands = collection(db, `rooms/${roomRef.id}/calleeCandidates`);
+    const calleeCands = collection(db, `rooms/${roomIdToUse}/calleeCandidates`);
     const unsubCand = onSnapshot(calleeCands, async (snap) => {
       for (const ch of snap.docChanges())
         if (ch.type === 'added') {
@@ -117,17 +132,51 @@ export default function App() {
 
     pc.onconnectionstatechange = () => setConnState(pc.connectionState);
     unsub.push(unsubRoom, unsubCand);
-    setStatus(`Room ID: ${roomRef.id} — share with peer or use quick‑match.`);
+    setStatus(`Room ID: ${roomIdToUse} — share with peer or use quick‑match.`);
   }
 
-  async function joinRoom() {
-    if (!roomId) return;
+  async function joinRoom(roomIdParam?: string) {
+    const idToUse = roomIdParam || roomId;
+    if (!idToUse) return;
     cleanup();
     setRole('guest');
     setConnState('signaling');
-    const roomDoc = await getDoc(doc(db, 'rooms', roomId));
+    
+    // Wait for room to exist and have an offer
+    let roomDoc = await getDoc(doc(db, 'rooms', idToUse));
     if (!roomDoc.exists()) {
-      alert('Room not found');
+      // Wait for room to be created (for quick-match scenario)
+      const unsubWait = onSnapshot(doc(db, 'rooms', idToUse), async (snap) => {
+        if (snap.exists() && snap.data()?.offer) {
+          unsubWait();
+          unsub.splice(unsub.indexOf(unsubWait), 1);
+          await joinRoomWithOffer(snap, idToUse);
+        }
+      });
+      unsub.push(unsubWait);
+      return;
+    }
+    
+    if (!roomDoc.data()?.offer) {
+      // Wait for offer to be created
+      const unsubWait = onSnapshot(doc(db, 'rooms', idToUse), async (snap) => {
+        if (snap.exists() && snap.data()?.offer) {
+          unsubWait();
+          unsub.splice(unsub.indexOf(unsubWait), 1);
+          await joinRoomWithOffer(snap, idToUse);
+        }
+      });
+      unsub.push(unsubWait);
+      return;
+    }
+    
+    await joinRoomWithOffer(roomDoc, idToUse);
+  }
+  
+  async function joinRoomWithOffer(roomDoc: any, roomIdParam: string) {
+    const roomData = roomDoc.data();
+    if (!roomData?.offer) {
+      append('system', 'Waiting for offer...');
       return;
     }
 
@@ -140,7 +189,7 @@ export default function App() {
       }
     };
 
-    const calleeCands = collection(db, `rooms/${roomId}/calleeCandidates`);
+    const calleeCands = collection(db, `rooms/${roomIdParam}/calleeCandidates`);
     pc.onicecandidate = async (e) => {
       if (e.candidate) {
         const init = {
@@ -154,16 +203,16 @@ export default function App() {
     };
 
     await pc.setRemoteDescription(
-      new RTCSessionDescription(roomDoc.data().offer),
+      new RTCSessionDescription(roomData.offer),
     );
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
-    await updateDoc(doc(db, 'rooms', roomId), {
+    await updateDoc(doc(db, 'rooms', roomIdParam), {
       answer: { type: answer.type, sdp: answer.sdp },
       state: 'answered',
     });
 
-    const callerCands = collection(db, `rooms/${roomId}/callerCandidates`);
+    const callerCands = collection(db, `rooms/${roomIdParam}/callerCandidates`);
     const unsubCaller = onSnapshot(callerCands, async (snap) => {
       for (const ch of snap.docChanges())
         if (ch.type === 'added') {
@@ -204,11 +253,11 @@ export default function App() {
     setRoomId(data.roomId);
     append('system', `Quick-match: ${data.status} — room ${data.roomId}`);
     if (data.status === 'waiting') {
-      // act as host automatically
-      await createRoom();
+      // act as host automatically, use the server-provided roomId
+      await createRoom(data.roomId);
     } else {
-      // act as guest automatically
-      await joinRoom();
+      // act as guest automatically, pass roomId directly to avoid state timing issues
+      await joinRoom(data.roomId);
     }
   }
   function sendChat() {

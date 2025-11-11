@@ -177,7 +177,7 @@ This will start:
 2. **Create Web Service**:
    - Use `render.yaml` configuration file
    - Or manually configure:
-     - Build Command: `npm install && npm run build`
+     - Build Command: `npm install && npm run build:server`
      - Start Command: `node dist/apps/server/main.js`
 3. **Set Environment Variables**:
    - `PORT`: 3001 (or let Render assign)
@@ -324,6 +324,12 @@ The application tracks connection state through the WebRTC lifecycle:
 - **Connection State**: Verify connection state is "connected"
 - **DataChannel**: Check browser console for DataChannel errors
 - **Firestore**: Ensure Firestore rules allow read/write access
+
+### Deployment Build Failures
+
+- **Build Errors with `import.meta.env`**: Ensure you're using `npm run build:server` (not `npm run build`) to exclude client code
+- **Start Command**: Use `node dist/apps/server/main.js` for production (not `npm run start`)
+- **Client Code in Server Build**: Check `tsconfig.build.json` excludes `apps/client` directory
 
 ## Design Principles
 
