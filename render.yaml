@@ -2,11 +2,10 @@ services:
   - type: web
     name: p2p-chat-server
     env: node
-    buildCommand: npm install && npm run build
+    buildCommand: npm install && npm run build:server
     startCommand: node dist/apps/server/main.js
     envVars:
       - key: PORT
         value: 3001
       - key: NODE_ENV
         value: production
-
