@@ -65,12 +65,16 @@ export default function App() {
     setConnState('signaling');
     const pc = createPeer();
     pcRef.current = pc;
-    
+
+    const roomsCollection = collection(db, 'rooms');
     let roomIdToUse: string;
+    let roomDocRef;
     if (existingRoomId) {
       // Use provided room ID (from quick-match)
+      roomDocRef = doc(db, 'rooms', existingRoomId);
       roomIdToUse = existingRoomId;
-      await setDoc(doc(db, 'rooms', roomIdToUse), {
+      setRoomId(roomIdToUse);
+      await setDoc(roomDocRef, {
         createdAt: serverTimestamp(),
         type: 'p2p-chat',
         state: 'waiting',
@@ -78,15 +82,16 @@ export default function App() {
       append('system', `Using room: ${roomIdToUse}`);
     } else {
       // Create new room
-      const roomRef = await addDoc(collection(db, 'rooms'), {
+      roomDocRef = doc(roomsCollection);
+      roomIdToUse = roomDocRef.id;
+      setRoomId(roomIdToUse);
+      await setDoc(roomDocRef, {
         createdAt: serverTimestamp(),
         type: 'p2p-chat',
         state: 'waiting',
       });
-      roomIdToUse = roomRef.id;
       append('system', `Room created: ${roomIdToUse}`);
     }
-    setRoomId(roomIdToUse);
 
     const chat = pc.createDataChannel('chat', { ordered: true });
     chatRef.current = chat;
@@ -113,13 +118,16 @@ export default function App() {
       { merge: true },
     );
 
-    const unsubRoom = onSnapshot(doc(db, 'rooms', roomIdToUse), async (snap) => {
-      const data = snap.data();
-      if (data?.answer && !pc.currentRemoteDescription) {
-        await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
-        setConnState('connecting');
-      }
-    });
+    const unsubRoom = onSnapshot(
+      doc(db, 'rooms', roomIdToUse),
+      async (snap) => {
+        const data = snap.data();
+        if (data?.answer && !pc.currentRemoteDescription) {
+          await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+          setConnState('connecting');
+        }
+      },
+    );
     const calleeCands = collection(db, `rooms/${roomIdToUse}/calleeCandidates`);
     const unsubCand = onSnapshot(calleeCands, async (snap) => {
       for (const ch of snap.docChanges())
@@ -141,7 +149,7 @@ export default function App() {
     cleanup();
     setRole('guest');
     setConnState('signaling');
-    
+
     // Wait for room to exist and have an offer
     let roomDoc = await getDoc(doc(db, 'rooms', idToUse));
     if (!roomDoc.exists()) {
@@ -156,7 +164,7 @@ export default function App() {
       unsub.push(unsubWait);
       return;
     }
-    
+
     if (!roomDoc.data()?.offer) {
       // Wait for offer to be created
       const unsubWait = onSnapshot(doc(db, 'rooms', idToUse), async (snap) => {
@@ -169,10 +177,10 @@ export default function App() {
       unsub.push(unsubWait);
       return;
     }
-    
+
     await joinRoomWithOffer(roomDoc, idToUse);
   }
-  
+
   async function joinRoomWithOffer(roomDoc: any, roomIdParam: string) {
     const roomData = roomDoc.data();
     if (!roomData?.offer) {
@@ -202,9 +210,7 @@ export default function App() {
       }
     };
 
-    await pc.setRemoteDescription(
-      new RTCSessionDescription(roomData.offer),
-    );
+    await pc.setRemoteDescription(new RTCSessionDescription(roomData.offer));
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
     await updateDoc(doc(db, 'rooms', roomIdParam), {
@@ -269,60 +275,73 @@ export default function App() {
     sendJSON(chatRef.current, { t: 'chat', text });
   }
   return (
-    <div style={{ fontFamily: 'Inter, system-ui, Arial', padding: 16 }}>
-      <h1>P2P Distributed Chat</h1>
-      <p style={{ color: '#555' }}>
-        Decentralized comms: Firestore for signaling → WebRTC DataChannel for
-        P2P messages.
-      </p>
+    <div className="container">
+      <div className="header">
+        <h1>P2P Distributed Chat</h1>
+        <p>
+          Decentralized comms: Firestore for signaling → WebRTC DataChannel for
+          P2P messages.
+        </p>
+      </div>
 
-      <div
-        style={{
-          display: 'flex',
-          gap: 8,
-          alignItems: 'center',
-          marginBottom: 8,
-        }}
-      >
-        <button onClick={createRoom}>Create Room</button>
+      <div className="controls">
+        <button className="btn" onClick={() => createRoom()}>
+          Create Room
+        </button>
         <input
+          className={`input ${roomId ? 'input-filled' : ''}`}
           placeholder="Room ID"
           value={roomId}
           onChange={(e) => setRoomId(e.target.value)}
-          style={{ flex: 1 }}
+          readOnly={!!roomId && role === 'host'}
         />
-        <button onClick={joinRoom} disabled={!roomId}>
+        <button className="btn" onClick={() => joinRoom()} disabled={!roomId}>
           Join
         </button>
-        <button onClick={quickMatch}>Quick‑Match</button>
+        <button className="btn" onClick={quickMatch}>
+          Quick‑Match
+        </button>
       </div>
 
-      <div style={{ marginBottom: 8, fontSize: 12, color: '#666' }}>
-        Role: {role ?? '—'} | Conn: {connState} | {status}
+      {roomId && (
+        <div className="roomIdDisplay">
+          <strong>Room ID:</strong> <code>{roomId}</code>
+        </div>
+      )}
+
+      <div className="statusBar">
+        <div className="statusItem">
+          <span className="statusLabel">Role:</span>
+          <span className={`statusValue ${role ? `role-${role}` : ''}`}>
+            {role ?? '—'}
+          </span>
+        </div>
+        <div className="statusItem">
+          <span className="statusLabel">Conn:</span>
+          <span className={`statusValue conn-${connState}`}>{connState}</span>
+        </div>
+        <div className="statusItem">
+          <span className="statusValue">{status}</span>
+        </div>
       </div>
 
-      <div
-        style={{
-          border: '1px solid #ddd',
-          borderRadius: 12,
-          height: '60vh',
-          padding: 12,
-          display: 'flex',
-          flexDirection: 'column',
-        }}
-      >
-        <div style={{ flex: 1, overflow: 'auto', paddingRight: 8 }}>
+      <div className="chatArea">
+        <div className="chatMessages">
           {log.map((m) => (
-            <div key={m.id} style={{ marginBottom: 6 }}>
-              <div style={{ fontSize: 11, color: '#999' }}>
-                {m.ts} · {m.who}
+            <div key={m.id} className="message">
+              <div className="messageHeader">
+                <span className="messageTimestamp">{m.ts}</span>
+                <span className={`messageWho ${m.who.toLowerCase()}`}>
+                  {m.who}
+                </span>
               </div>
-              <div style={{ fontSize: 14 }}>{m.text}</div>
+              <div className="messageText">{m.text}</div>
             </div>
           ))}
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div className="chatInputArea">
           <input
+            className="chatInput"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && sendChat()}
@@ -331,9 +350,10 @@ export default function App() {
                 ? 'Type a message…'
                 : 'Connect to start chatting…'
             }
-            style={{ flex: 1 }}
+            disabled={connState !== 'connected'}
           />
           <button
+            className="sendBtn"
             onClick={sendChat}
             disabled={connState !== 'connected' || !input.trim()}
           >
@@ -342,7 +362,7 @@ export default function App() {
         </div>
       </div>
 
-      <details style={{ marginTop: 12 }}>
+      <details className="details">
         <summary>Architecture notes</summary>
         <ul>
           <li>
