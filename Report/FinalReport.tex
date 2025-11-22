@@ -206,7 +206,7 @@ TURN servers significantly improve connectivity under corporate or symmetric NAT
 The NestJS backend was intentionally limited to a single responsibility: \texttt{/quick-match}.
 \begin{itemize}
     \item \textbf{Statelessness}: The server maintains an in-memory queue of waiting users but does not persist session state.
-    \item \textbf{Implication}: If the server restarts, the queue is cleared. This decision adheres to the decentralized philosophy—the server is a mere facilitator, not a dependency for ongoing chats. Once paired, users do not interact with the server again.
+    \item \textbf{Implication}: If the server restarts, the queue is cleared. This decision adheres to the decentralized philosophy, the server is a mere facilitator, not a dependency for ongoing chats. Once paired, users do not interact with the server again.
 \end{itemize}
 
 % =============================== IMPLEMENTATION ===============================
@@ -282,7 +282,7 @@ Our team collaboratively developed a full-stack decentralized chat application. 
 Integration testing focused heavily on the signaling phase, ensuring that the transition from the Firestore-mediated handshake to the direct P2P connection was seamless and reliable.
 
 \subsection{Use of AI Assistants}
-We utilized AI-powered coding assistants, specifically Cursor and GitHub Copilot, to accelerate development. These tools were used to:
+We utilized AI-powered coding assistants, specifically Cursor and Gemini 3 Pro, to accelerate development. These tools were used to:
 \begin{itemize}
     \item Generate boilerplate code for React components and NestJS controllers.
     \item Debug intricate WebRTC configuration issues and race conditions.
@@ -309,7 +309,7 @@ The asynchronous nature of Firestore updates led to race conditions. For instanc
 
 \subsection{Queue Reset on Server Restart}
 Our decision to use an in-memory array for the quick-match queue meant that any server deployment or restart would clear pending users.
-\textbf{Impact}: Users currently waiting in the queue would be "orphaned"—stuck waiting for a match that would never arrive.
+\textbf{Impact}: Users currently waiting in the queue would be "orphaned", stuck waiting for a match that would never arrive.
 \textbf{Lesson}: Even "stateless" services often require some persistent state (e.g., Redis) to handle service interruptions gracefully.
 
 \section{Code Availability}
