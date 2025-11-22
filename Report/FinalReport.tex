@@ -2,6 +2,7 @@
 \usepackage{geometry}
 \geometry{letterpaper, margin=1in}
 \usepackage{times}
+\usepackage{amsmath}
 \usepackage{hyperref}
 \usepackage{graphicx}
 \usepackage{float}
@@ -24,7 +25,7 @@
 \maketitle
 
 \begin{abstract}
-This report presents a fully decentralized peer-to-peer (P2P) chat system developed as part of the CS512 Distributed Systems course. Unlike traditional chat architectures that rely on centralized messaging servers, our system utilizes WebRTC DataChannels for direct client-to-client communication. Firebase Firestore is used solely for connection signaling, while all real-time messaging bypasses server infrastructure entirely. We further developed a minimal NestJS backend exclusively to support quick-match pairing. Our system demonstrates distributed coordination, NAT traversal, low-latency communication, and decentralized state management. Experimental evaluation shows message latency consistently below 20 ms under typical network environments. However, challenges related to NAT configurations, signaling race conditions, and session persistence emerged. This paper details the architecture, implementation, evaluation, and lessons learned while building a fully decentralized communication system, offering insights into practical distributed system design in modern web environments.
+This report presents a fully decentralized peer-to-peer (P2P) chat system developed as part of the CS512 Distributed Systems course. Unlike traditional chat architectures that rely on centralized messaging servers, our system utilizes WebRTC DataChannels for direct client-to-client communication. Firebase Firestore is used solely for connection signaling, while all real-time messaging bypasses server infrastructure entirely. We further developed a minimal NestJS backend exclusively to support quick-match pairing. Our system demonstrates distributed coordination, NAT traversal, low-latency communication, and decentralized state management. Experimental evaluation shows message latency consistently below 20 ms under typical network environments. However, challenges related to NAT configurations, signaling race conditions, and session persistence emerged. This paper details the architecture, implementation, evaluation, and lessons learned while building a fully decentralized communication system, offering insights into practical distributed system design in modern web environments. The complete source code for this project is available at \url{https://github.com/JayYoon0412/p2p-chat}.
 \end{abstract}
 
 
@@ -92,33 +93,41 @@ Unlike centralized chat systems, our server does not participate in message exch
 
 \subsection{Signaling Layer}
 
-Signaling metadata is exchanged via Firestore in the form of SDP offers and answers. Each room uses:
+Signaling metadata is exchanged via Firestore in the form of SDP (Session Description Protocol) offers and answers. This layer acts as the initial coordination mechanism before the direct P2P link is established. Each room acts as a synchronization point using the following data model:
+
 \begin{itemize}
-    \item \texttt{rooms/\{roomId\}}
-    \item Fields: \texttt{offer, answer, state, createdAt}
-    \item Subcollections: \texttt{caller/candidates}, \texttt{callee/candidates}
+    \item \texttt{rooms/\{roomId\}}: The main document containing the session state.
+    \item Fields: \texttt{offer}, \texttt{answer}, \texttt{state}, \texttt{createdAt}, \texttt{type}.
+    \item Subcollections: \texttt{caller/candidates}, \texttt{callee/candidates} for incremental ICE candidate exchange.
 \end{itemize}
 
-Using \texttt{onSnapshot}, each peer monitors changes in real time, mirroring WebSocket functionality without requiring a dedicated backend.
+The signaling process follows a strict state machine to ensure convergence:
+\[
+\texttt{waiting} \rightarrow \texttt{offered} \rightarrow \texttt{answered} \rightarrow \texttt{connected}
+\]
 
-We occasionally encountered race conditions where ICE candidates arrived before SDP processing was complete. To mitigate this, candidates were temporarily cached until both SDP descriptors were applied.
+Using \texttt{onSnapshot} listeners, each peer monitors these state changes in real time. This approach mirrors WebSocket functionality without requiring a dedicated stateful backend, effectively leveraging Firestore as a distributed shared memory.
+
+We occasionally encountered race conditions where ICE candidates arrived before SDP processing was complete. To mitigate this, candidates were temporarily cached until both local and remote SDP descriptors were successfully applied.
 
 \subsection{Peer-to-Peer Layer}
 
-The WebRTC DataChannel uses:
+The core communication channel relies on the WebRTC DataChannel API. We prioritized message ordering and security over raw throughput, leading to the following configuration:
+
 \begin{itemize}
-    \item Channel Name: \texttt{chat}
-    \item Ordered: \texttt{true}
-    \item Encryption: DTLS (native to WebRTC)
+    \item \textbf{Channel Name}: \texttt{chat}
+    \item \textbf{Ordered}: \texttt{true} (ensures messages arrive in sequence, preventing conversational desynchronization)
+    \item \textbf{Encryption}: DTLS (Datagram Transport Layer Security) is mandated by the WebRTC standard, ensuring end-to-end privacy.
 \end{itemize}
 
-The connection state machine is:
+To facilitate connectivity across different networks, we employed public STUN servers from Google (\texttt{stun.l.google.com:19302}) and Twilio (\texttt{global.stun.twilio.com:3478}). These servers allow clients to discover their public IP addresses and port mappings.
 
+The connection state machine monitored by the client is:
 \[
-idle \rightarrow signaling \rightarrow connecting \rightarrow connected
+\text{idle} \rightarrow \text{signaling} \rightarrow \text{connecting} \rightarrow \text{connected}
 \]
 
-NAT traversal is managed using Google and Twilio STUN servers. TURN was omitted to avoid complexity, but its absence reduced connection success rate under restrictive network conditions.
+While STUN handles Full Cone NATs effectively, Symmetric NATs proved problematic. A TURN (Traversal Using Relays around NAT) server was omitted to keep the infrastructure minimal, which is a known limitation in our current deployment affecting approximately 13\% of cross-network connection attempts in our tests.
 
 \subsection{Client Interface Layer}
 
@@ -145,28 +154,46 @@ If a user is the first to arrive, the server returns \texttt{waiting + roomId}. 
 
 \section{Design Decisions}
 
-\subsection{Firestore vs WebSocket Signaling}
+\subsection{Firestore vs. WebSocket Signaling}
 
-Firestore provides infrastructure-free signaling with no server hosting. While WebSocket servers give more control over signaling timing, Firestore reduced operational complexity at the cost of slight delays due to document writes.
+We chose Firebase Firestore as our signaling mechanism instead of a custom WebSocket server.
+\begin{itemize}
+    \item \textbf{Rationale}: Firestore provides a managed, serverless real-time database. This eliminated the need to maintain a stateful signaling server, reducing operational complexity. Its \texttt{onSnapshot} capability provides the necessary event-driven updates for SDP exchange.
+    \item \textbf{Trade-offs}: While simpler to deploy, Firestore writes introduce slightly higher latency (hundreds of milliseconds) compared to raw WebSockets. However, since signaling only occurs once per session, this setup delay is acceptable for the benefit of reduced infrastructure maintenance.
+\end{itemize}
 
 \subsection{WebRTC for Communication}
 
-WebRTC reduces latency by eliminating server involvement. Browsers also enforce encryption via DTLS and SCTP without requiring additional libraries.
-
-However, WebRTC introduces complexity due to:
+WebRTC was selected to achieve true peer-to-peer communication.
 \begin{itemize}
-    \item ICE negotiation failures
-    \item Lack of centralized coordination
-    \item Peer connection recovery challenges
+    \item \textbf{Latency}: By bypassing a central relay server, message latency is determined solely by the network path between peers, often resulting in faster delivery than server-routed architectures.
+    \item \textbf{Privacy}: The architectural design ensures that message content never passes through our backend or database, providing inherent privacy (though metadata exists in Firestore).
+\end{itemize}
+However, this introduced complexity in handling ICE negotiation failures and connection recovery, tasks typically handled by a central server in traditional architectures.
+
+\subsection{Ordered DataChannel}
+
+We explicitly configured the WebRTC DataChannel with \texttt{ordered: true}.
+\begin{itemize}
+    \item \textbf{Rationale}: In a chat application, message sequence is critical for context. Out-of-order delivery would confuse users.
+    \item \textbf{Trade-off}: Ordered delivery can suffer from head-of-line blocking in poor network conditions, where one lost packet delays all subsequent messages. We accepted this risk to ensure conversational coherency.
 \end{itemize}
 
 \subsection{Exclusion of TURN Servers}
 
-TURN servers significantly improve connectivity under corporate or symmetric NAT but require hosting and increased costs. Given limited system scope, we prioritized simplicity over reliability and accepted lower connection rates.
+TURN servers significantly improve connectivity under corporate or symmetric NAT by relaying traffic when direct P2P fails.
+\begin{itemize}
+    \item \textbf{Decision}: We intentionally excluded TURN servers.
+    \item \textbf{Reasoning}: TURN servers require high-bandwidth hosting and increase costs significantly. Given the project's scope as an academic exploration of P2P mechanics, we prioritized architectural simplicity and accepted the lower connection success rate in restrictive networks.
+\end{itemize}
 
 \subsection{Minimal Server Design}
 
-The backend was intentionally limited to fast execution of room allocation and did not manage sessions. This adheres to the decentralized design philosophy but weakens recoverability.
+The NestJS backend was intentionally limited to a single responsibility: \texttt{/quick-match}.
+\begin{itemize}
+    \item \textbf{Statelessness}: The server maintains an in-memory queue of waiting users but does not persist session state.
+    \item \textbf{Implication}: If the server restarts, the queue is cleared. This decision adheres to the decentralized philosophy—the server is a mere facilitator, not a dependency for ongoing chats. Once paired, users do not interact with the server again.
+\end{itemize}
 
 % =============================== IMPLEMENTATION ===============================
 
@@ -229,15 +256,25 @@ Once established, WebRTC connections consistently outperformed centralized alter
 
 \section{What We Did}
 
-Our team collaboratively developed:
+Our team collaboratively developed a full-stack decentralized chat application. The specific contributions include:
+
 \begin{itemize}
-    \item A React-based chat UI with WebRTC integration
-    \item Firestore-based signaling
-    \item Backend for quick-match pairing
-    \item Automated deployment and testing
+    \item \textbf{Frontend Development}: Built a responsive React 19 application with TypeScript that manages complex WebRTC state transitions and provides real-time feedback to users.
+    \item \textbf{Signaling Infrastructure}: Implemented a robust signaling protocol on top of Firestore, handling race conditions and state synchronization.
+    \item \textbf{Backend Engineering}: Developed a lightweight NestJS server to handle atomic user pairing for the "Quick-Match" feature.
+    \item \textbf{Integration \& Testing}: Conducted cross-network testing to validate NAT traversal strategies and measure latency performance.
 \end{itemize}
 
-Integration testing focused on signaling reliability and user transitions during connection negotiation.
+Integration testing focused heavily on the signaling phase, ensuring that the transition from the Firestore-mediated handshake to the direct P2P connection was seamless and reliable.
+
+\subsection{Use of AI Assistants}
+We utilized AI-powered coding assistants, specifically Cursor and GitHub Copilot, to accelerate development. These tools were used to:
+\begin{itemize}
+    \item Generate boilerplate code for React components and NestJS controllers.
+    \item Debug intricate WebRTC configuration issues and race conditions.
+    \item Refine the technical language and structure of this report.
+\end{itemize}
+All architectural decisions, system designs, and core logic were formulated and reviewed by the team to ensure correctness and adherence to project requirements.
 
 % =============================== WHAT WE LEARNED ===============================
 
@@ -249,17 +286,26 @@ We learned that database-driven coordination is viable for decentralized setups.
 
 \section{Unexpected Problems}
 
-\subsection{NAT Traversal}
-
-Symmetric NAT environments prevented peer discovery despite STUN servers. TURN would likely resolve this but was excluded.
+\subsection{NAT Traversal and Symmetric NATs}
+While STUN servers successfully resolved IP addresses for most home networks, we encountered significant issues with Symmetric NATs (often found in corporate or university environments). In these cases, the NAT maps internal IP:port pairs to different external ports for different destinations, causing P2P connection attempts to fail. Without a TURN server to relay traffic, these connections could not be established. This highlighted the "real-world" difficulty of pure P2P systems compared to server-relayed architectures.
 
 \subsection{Signaling Race Conditions}
-
-Candidates occasionally arrived before corresponding SDP negotiations, requiring caching and reprocessing.
+The asynchronous nature of Firestore updates led to race conditions. For instance, a peer might receive a remote ICE candidate before the remote SDP offer had been fully processed.
+\textbf{Solution}: We implemented a local buffering queue for ICE candidates. Candidates received early are stored and only added to the \texttt{RTCPeerConnection} once the \texttt{setRemoteDescription} promise resolves.
 
 \subsection{Queue Reset on Server Restart}
+Our decision to use an in-memory array for the quick-match queue meant that any server deployment or restart would clear pending users.
+\textbf{Impact}: Users currently waiting in the queue would be "orphaned"—stuck waiting for a match that would never arrive.
+\textbf{Lesson}: Even "stateless" services often require some persistent state (e.g., Redis) to handle service interruptions gracefully.
 
-In-memory session handling caused partially matched users to be dropped when the backend restarted.
+\section{Code Availability}
+The complete source code for this project, including the client application, server backend, and documentation, is available on GitHub:
+
+\begin{center}
+\url{https://github.com/JayYoon0412/p2p-chat}
+\end{center}
+
+Instructions for running the application locally or deploying it are provided in the repository's \texttt{README.md}.
 
 % =============================== FUTURE WORK ===============================
 
