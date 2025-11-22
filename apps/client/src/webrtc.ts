@@ -6,7 +6,16 @@ export const rtcConfig: RTCConfiguration = {
         'stun:global.stun.twilio.com:3478',
       ],
     },
-    // Add TURN for reliability?
+    {
+      urls: 'turn:openrelay.metered.ca:80',
+      username: 'openrelayproject',
+      credential: 'openrelayproject'
+    },
+    {
+      urls: 'turn:openrelay.metered.ca:443',
+      username: 'openrelayproject',
+      credential: 'openrelayproject'
+    }
   ],
 };
 
