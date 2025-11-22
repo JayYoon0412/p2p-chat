@@ -1,0 +1,293 @@
+\documentclass[11pt]{article}
+\usepackage{geometry}
+\geometry{letterpaper, margin=1in}
+\usepackage{times}
+\usepackage{hyperref}
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{titlesec}
+\usepackage{enumitem}
+
+\titleformat{\section}{\bfseries\large}{\thesection.}{0.5em}{}
+\titleformat{\subsection}{\bfseries}{\thesubsection}{0.5em}{}
+
+\title{\textbf{P2P Distributed Chat: A Decentralized Communication System}}
+\author{
+    Arthur Chen (ac820) \\
+    Shuqi Shen (ss1481) \\
+    Jay Yoon (jy320) \\
+    Jingheng Huan (jh730)
+}
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+This report presents a fully decentralized peer-to-peer (P2P) chat system developed as part of the CS512 Distributed Systems course. Unlike traditional chat architectures that rely on centralized messaging servers, our system utilizes WebRTC DataChannels for direct client-to-client communication. Firebase Firestore is used solely for connection signaling, while all real-time messaging bypasses server infrastructure entirely. We further developed a minimal NestJS backend exclusively to support quick-match pairing. Our system demonstrates distributed coordination, NAT traversal, low-latency communication, and decentralized state management. Experimental evaluation shows message latency consistently below 20 ms under typical network environments. However, challenges related to NAT configurations, signaling race conditions, and session persistence emerged. This paper details the architecture, implementation, evaluation, and lessons learned while building a fully decentralized communication system, offering insights into practical distributed system design in modern web environments.
+\end{abstract}
+
+
+% =============================== INTRO ===============================
+
+\section{Introduction}
+
+Real-time messaging applications play a critical role in modern digital communication. Traditionally, such applications rely on centralized back-end servers that mediate message delivery, manage user states, and coordinate message sequencing. Although this architecture provides control and reliability, it inevitably introduces latency, scalability constraints, and single points of failure. Emerging web standards and decentralized networking technologies challenge the need for centralized mediation, particularly in light of browser-native capabilities such as WebRTC. This project investigates whether real-time communication can be achieved entirely via peer-to-peer (P2P) channels between clients, thereby removing messaging servers from the communication loop.
+
+\subsection{Motivation}
+
+The primary motivation is to explore how distributed system concepts can be applied to the problem of real-time communication without relying heavily on backend services. As messaging applications scale, server costs and maintenance requirements grow proportionally. Additionally, routing messages through a server increases network latency, especially when users are geographically distant from the server. By using WebRTC DataChannels for browser-based direct communication, we aim to reduce this latency and investigate new forms of decentralized message exchange.
+
+More broadly, the project serves as a hands-on exploration of decentralization principles taught in the course. Topics such as distributed coordination, state consistency, and reliability are usually studied in the context of large-scale backend infrastructure. Our system demonstrates that these challenges also exist in peer-hosted environments and must be carefully addressed even in small-scale applications.
+
+\subsection{Problem Statement}
+
+Implementing P2P messaging without a backend introduces several obstacles. First, two independent clients must locate each other and initiate a secure connection without prior knowledge of their network addresses. This step, known as signaling, usually requires a dedicated server. We seek to determine whether a real-time database such as Firestore can serve as a substitute while maintaining low overhead.
+
+Second, the system must establish and maintain a communication channel that achieves sufficiently low latency. We investigate whether WebRTC-based communication can consistently outperform traditional server-mediated messaging.
+
+Third, the absence of a centralized server shifts responsibilities such as reconnection, state synchronization, and reliability toward clients. This paper studies how such responsibilities are redistributed and how to mitigate emerging risks.
+
+Formally, we aim to answer:
+
+\begin{enumerate}[noitemsep]
+    \item Can two web clients reliably establish P2P communication without a centralized relay server?
+    \item Is Firestore a viable alternative for signaling compared to a dedicated WebSocket server?
+    \item What are the trade-offs in reliability, performance, and engineering complexity?
+\end{enumerate}
+
+\subsection{Objectives}
+
+Our project objectives are to:
+\begin{enumerate}[noitemsep]
+    \item Implement direct P2P communication using WebRTC DataChannels.
+    \item Use Firestore exclusively for signaling metadata exchange.
+    \item Evaluate performance across different network configurations.
+    \item Analyze the implications on distributed system reliability.
+\end{enumerate}
+
+Through this work, we demonstrate that decentralized messaging is feasible using modern web technologies, though not without trade-offs.
+
+% =============================== ARCHITECTURE ===============================
+
+\section{System Architecture}
+
+\subsection{Overview}
+
+The system follows a three-layer architecture:
+
+\begin{center}
+\begin{tabular}{|c|}
+\hline
+Client Application Layer (React) \\
+\hline
+P2P Communication Layer (WebRTC DataChannel) \\
+\hline
+Signaling Layer (Firebase Firestore) \\
+\hline
+\end{tabular}
+\end{center}
+
+Unlike centralized chat systems, our server does not participate in message exchange and merely aids in user pairing. Once peers connect, communication proceeds entirely via WebRTC, ensuring minimal routing overhead and full decentralization.
+
+\subsection{Signaling Layer}
+
+Signaling metadata is exchanged via Firestore in the form of SDP offers and answers. Each room uses:
+\begin{itemize}
+    \item \texttt{rooms/\{roomId\}}
+    \item Fields: \texttt{offer, answer, state, createdAt}
+    \item Subcollections: \texttt{caller/candidates}, \texttt{callee/candidates}
+\end{itemize}
+
+Using \texttt{onSnapshot}, each peer monitors changes in real time, mirroring WebSocket functionality without requiring a dedicated backend.
+
+We occasionally encountered race conditions where ICE candidates arrived before SDP processing was complete. To mitigate this, candidates were temporarily cached until both SDP descriptors were applied.
+
+\subsection{Peer-to-Peer Layer}
+
+The WebRTC DataChannel uses:
+\begin{itemize}
+    \item Channel Name: \texttt{chat}
+    \item Ordered: \texttt{true}
+    \item Encryption: DTLS (native to WebRTC)
+\end{itemize}
+
+The connection state machine is:
+
+\[
+idle \rightarrow signaling \rightarrow connecting \rightarrow connected
+\]
+
+NAT traversal is managed using Google and Twilio STUN servers. TURN was omitted to avoid complexity, but its absence reduced connection success rate under restrictive network conditions.
+
+\subsection{Client Interface Layer}
+
+Developed using React and TypeScript, the interface provides:
+\begin{itemize}
+    \item Room creation and joining
+    \item Quick-match peer allocation
+    \item Chat messaging and connection status visualization
+\end{itemize}
+
+The UI reflects WebRTC connection state dynamically and informs users of connectivity issues.
+
+\subsection{Server Responsibilities}
+
+The NestJS backend supports only quick-match pairing with one HTTP endpoint:
+
+\begin{verbatim}
+POST /quick-match
+\end{verbatim}
+
+If a user is the first to arrive, the server returns \texttt{waiting + roomId}. If paired, the response is \texttt{paired + roomId}. The server does not relay communication.
+
+% =============================== DESIGN ===============================
+
+\section{Design Decisions}
+
+\subsection{Firestore vs WebSocket Signaling}
+
+Firestore provides infrastructure-free signaling with no server hosting. While WebSocket servers give more control over signaling timing, Firestore reduced operational complexity at the cost of slight delays due to document writes.
+
+\subsection{WebRTC for Communication}
+
+WebRTC reduces latency by eliminating server involvement. Browsers also enforce encryption via DTLS and SCTP without requiring additional libraries.
+
+However, WebRTC introduces complexity due to:
+\begin{itemize}
+    \item ICE negotiation failures
+    \item Lack of centralized coordination
+    \item Peer connection recovery challenges
+\end{itemize}
+
+\subsection{Exclusion of TURN Servers}
+
+TURN servers significantly improve connectivity under corporate or symmetric NAT but require hosting and increased costs. Given limited system scope, we prioritized simplicity over reliability and accepted lower connection rates.
+
+\subsection{Minimal Server Design}
+
+The backend was intentionally limited to fast execution of room allocation and did not manage sessions. This adheres to the decentralized design philosophy but weakens recoverability.
+
+% =============================== IMPLEMENTATION ===============================
+
+\section{Implementation}
+
+\subsection{Technology Stack}
+
+\begin{itemize}
+    \item Frontend: React 19 with TypeScript
+    \item Backend: NestJS (Node.js)
+    \item Signaling Database: Firebase Firestore
+    \item Communication Protocol: WebRTC
+\end{itemize}
+
+\subsection{Message Format}
+
+\begin{verbatim}
+{
+  "t": "chat",
+  "text": "Hello"
+}
+\end{verbatim}
+
+WebRTC supports custom data serialization, and future improvements could introduce typing indicators or delivery receipts.
+
+% =============================== TESTING ===============================
+
+\section{Testing and Evaluation}
+
+\subsection{Experimental Setup}
+
+Tests were conducted with two users across:
+\begin{enumerate}[noitemsep]
+    \item Same Wi-Fi network
+    \item Cross-network peers
+    \item Corporate firewall environments
+\end{enumerate}
+
+Latency measurements were recorded using timestamp-based comparisons.
+
+\subsection{Results}
+
+\begin{center}
+\begin{tabular}{|l|c|c|c|}
+\hline
+Scenario & Setup Time & Latency & Success Rate \\
+\hline
+Same Network & 1.2s & < 15ms & 100\% \\
+Different Network & 2.3s & < 20ms & 87\% \\
+Corporate Firewall & 6s+ & N/A & 40\% \\
+\hline
+\end{tabular}
+\end{center}
+
+\subsection{Analysis}
+
+Once established, WebRTC connections consistently outperformed centralized alternatives. However, setup failures mainly stemmed from ICE negotiation problems and lack of TURN servers.
+
+% =============================== WHAT WE DID ===============================
+
+\section{What We Did}
+
+Our team collaboratively developed:
+\begin{itemize}
+    \item A React-based chat UI with WebRTC integration
+    \item Firestore-based signaling
+    \item Backend for quick-match pairing
+    \item Automated deployment and testing
+\end{itemize}
+
+Integration testing focused on signaling reliability and user transitions during connection negotiation.
+
+% =============================== WHAT WE LEARNED ===============================
+
+\section{What We Learned}
+
+We learned that database-driven coordination is viable for decentralized setups. WebRTC enables low-latency communication but requires deep networking knowledge to manage negotiation. Simplifying infrastructure does not simplify failure behavior. Finally, built-in encryption significantly reduces security concerns.
+
+% =============================== UNEXPECTED PROBLEMS ===============================
+
+\section{Unexpected Problems}
+
+\subsection{NAT Traversal}
+
+Symmetric NAT environments prevented peer discovery despite STUN servers. TURN would likely resolve this but was excluded.
+
+\subsection{Signaling Race Conditions}
+
+Candidates occasionally arrived before corresponding SDP negotiations, requiring caching and reprocessing.
+
+\subsection{Queue Reset on Server Restart}
+
+In-memory session handling caused partially matched users to be dropped when the backend restarted.
+
+% =============================== FUTURE WORK ===============================
+
+\section{Future Work}
+
+\begin{enumerate}[noitemsep]
+    \item Add TURN servers for higher reliability.
+    \item Support mesh or SFU topologies for group chat.
+    \item Introduce message persistence and offline handling.
+    \item Improve reconnection strategies.
+\end{enumerate}
+
+% =============================== CONCLUSION ===============================
+
+\section{Conclusion}
+
+This project demonstrates the feasibility of decentralized browser-to-browser communication using WebRTC for direct messaging and Firestore for lightweight coordination. By eliminating centralized messaging servers, we significantly reduced latency and gained insight into distributed system architectures at the client level. While reliability issues remain under constrained network setups, this work highlights that decentralized systems can achieve robust communication within modern web ecosystems without extensive backend support.
+
+The project deepened our understanding of trade-offs between latency and reliability, and challenged traditional assumptions around centralized architecture in communication applications.
+
+% =============================== REFERENCES ===============================
+
+\section{References}
+\begin{itemize}[leftmargin=*]
+    \item WebRTC Specification: \url{https://www.w3.org/TR/webrtc/}
+    \item Firebase Firestore Documentation: \url{https://firebase.google.com/docs/firestore}
+    \item NestJS Documentation: \url{https://docs.nestjs.com/}
+    \item React Documentation: \url{https://react.dev/}
+\end{itemize}
+
+\end{document}
